@@ -11,6 +11,7 @@ const TEST_IMAGE_ROTATED_90: &str = "res/5.png";
 // ============================================================
 // 检测模型路径
 // ============================================================
+const DET_V6: &str = "models/PP-OCRv6_small_det.mnn";
 const DET_V5: &str = "models/PP-OCRv5_mobile_det.mnn";
 const DET_V5_FP16: &str = "models/PP-OCRv5_mobile_det_fp16.mnn";
 const DET_V4: &str = "models/ch_PP-OCRv4_det_infer.mnn";
@@ -18,6 +19,9 @@ const DET_V4: &str = "models/ch_PP-OCRv4_det_infer.mnn";
 // ============================================================
 // 识别模型 + 字符集路径
 // ============================================================
+const REC_V6: &str = "models/PP-OCRv6_small_rec.mnn";
+const CHARSET_V6: &str = "models/ppocr_keys_v6.txt";
+
 const REC_V5: &str = "models/PP-OCRv5_mobile_rec.mnn";
 const REC_V5_FP16: &str = "models/PP-OCRv5_mobile_rec_fp16.mnn";
 const CHARSET_V5: &str = "models/ppocr_keys_v5.txt";
@@ -177,6 +181,11 @@ fn run_rec_only(rec_path: &str, charset_path: &str, label: &str) {
 // ============================================================
 
 #[test]
+fn test_det_v6() {
+    run_det_only(DET_V6, "det-v6");
+}
+
+#[test]
 fn test_det_v5() {
     run_det_only(DET_V5, "det-v5");
 }
@@ -194,6 +203,11 @@ fn test_det_v4() {
 // ============================================================
 // 识别模型测试（仅识别，使用 v5 det 做前置检测）
 // ============================================================
+
+#[test]
+fn test_rec_v6() {
+    run_rec_only(REC_V6, CHARSET_V6, "rec-v6");
+}
 
 #[test]
 fn test_rec_v5() {
@@ -268,6 +282,21 @@ fn test_rec_th() {
 // ============================================================
 // 完整 OCR Pipeline 测试（det + rec 全组合）
 // ============================================================
+
+#[test]
+fn test_pipeline_v6_det_v6_rec() {
+    run_full_pipeline(DET_V6, REC_V6, CHARSET_V6, "pipeline-v6+v6");
+}
+
+#[test]
+fn test_pipeline_v5_det_v6_rec() {
+    run_full_pipeline(DET_V5, REC_V6, CHARSET_V6, "pipeline-v5+v6");
+}
+
+#[test]
+fn test_pipeline_v6_det_v5_rec() {
+    run_full_pipeline(DET_V6, REC_V5, CHARSET_V5, "pipeline-v6+v5");
+}
 
 #[test]
 fn test_pipeline_v5_det_v5_rec() {

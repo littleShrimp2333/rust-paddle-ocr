@@ -29,7 +29,7 @@ A lightweight and efficient OCR (Optical Character Recognition) Rust library bas
 - **Layered API Architecture**: Supports three usage patterns: end-to-end, layered calls, and independent models.
 
 ### Model Support
-- **Multi-Version Support**: Supports both PP-OCRv4 and PP-OCRv5 models for flexible selection.
+- **Multi-Version Support**: Supports PP-OCRv4, PP-OCRv5, and PP-OCRv6 models for flexible selection.
 - **Multi-Language Support**: PP-OCRv5 supports 11+ specific language models, covering over 100 languages.
 - **Complex Scenario Recognition**: Enhanced capabilities for handwritten text, vertical text, and rare characters.
 - **Flexible Loading**: Models can be loaded via file paths or directly from memory bytes.
@@ -47,7 +47,7 @@ A lightweight and efficient OCR (Optical Character Recognition) Rust library bas
 
 ## Model Versions
 
-This library supports three versions of PaddleOCR models:
+This library supports four versions of PaddleOCR models:
 
 ### PP-OCRv4
 - **Stable Version**: thoroughly verified with excellent compatibility.
@@ -104,19 +104,31 @@ This library supports three versions of PaddleOCR models:
   - Recognition: `PP-OCRv5_mobile_rec_fp16.mnn`
   - Charset: `ppocr_keys_v5.txt`
 
+### PP-OCRv6
+- **Latest Version**: The newest generation OCR solution with improved accuracy.
+- **Enhanced Capabilities**:
+  - Improved detection for complex layouts and dense text.
+  - Better recognition accuracy for multi-language scenarios.
+  - Optimized for both accuracy and speed.
+- **Model Files**:
+  - Detection: `PP-OCRv6_small_det.mnn`
+  - Recognition: `PP-OCRv6_small_rec.mnn`
+  - Charset: `ppocr_keys_v6.txt`
+
 ### Model Performance Comparison
 
-| Feature | PP-OCRv4 | PP-OCRv5 | PP-OCRv5 FP16 |
-|---|---|---|---|
-| Language Support | Chinese, English | Multi-language (Default CN/EN/JP, 11+ specific models) | Multi-language (Default CN/EN/JP, 11+ specific models) |
-| Text Types | Chinese, English | Simplified/Traditional CN, EN, JP, Pinyin | Simplified/Traditional CN, EN, JP, Pinyin |
-| Handwriting | Basic | Significantly Enhanced | Significantly Enhanced |
-| Vertical Text | Basic | Optimized | Optimized |
-| Rare Characters | Limited | Enhanced | Enhanced |
-| Speed (FPS) | 1.1 | 1.2 | 1.2 |
-| Memory (Peak) | 422.22MB | 388.41MB | 388.41MB |
-| Model Size | Standard | Standard | Halved |
-| Recommended | Standard Docs | Complex Scenes & Multi-lang | High Performance & Multi-lang |
+| Feature | PP-OCRv4 | PP-OCRv5 | PP-OCRv5 FP16 | PP-OCRv6 |
+|---|---|---|---|---|
+| Language Support | Chinese, English | Multi-language (Default CN/EN/JP, 11+ specific models) | Multi-language (Default CN/EN/JP, 11+ specific models) | Multi-language (Enhanced) |
+| Text Types | Chinese, English | Simplified/Traditional CN, EN, JP, Pinyin | Simplified/Traditional CN, EN, JP, Pinyin | Simplified/Traditional CN, EN, JP, Pinyin |
+| Handwriting | Basic | Significantly Enhanced | Significantly Enhanced | Significantly Enhanced |
+| Vertical Text | Basic | Optimized | Optimized | Optimized |
+| Rare Characters | Limited | Enhanced | Enhanced | Enhanced |
+| Complex Layouts | Basic | Good | Good | Excellent |
+| Speed (FPS) | 1.1 | 1.2 | 1.2 | 1.2 |
+| Memory (Peak) | 422.22MB | 388.41MB | 388.41MB | ~380MB |
+| Model Size | Standard | Standard | Halved | Standard |
+| Recommended | Standard Docs | Complex Scenes & Multi-lang | High Performance & Multi-lang | Latest & Best Accuracy |
 
 ## Application Scenarios
 
@@ -249,6 +261,26 @@ branch = "next"
 This library requires:
 - Pre-trained PaddleOCR models converted to MNN format.
 - A character set file for text recognition.
+
+> **Note for Ubuntu 20.04 users**: The prebuilt MNN library may not be compatible with Ubuntu 20.04 due to its older `libstdc++` (GCC 9.4, max `GLIBCXX_3.4.28`). If you encounter `GLIBCXX_3.4.29' not found` error, you have several options:
+>
+> **Option A — Static link libstdc++** (recommended for cross-compilation from newer systems):
+> ```bash
+> cargo build --release --features static-libstdcpp
+> ```
+> This embeds the required C++ symbols into the binary, making it independent of the system `libstdc++.so.6`.
+>
+> **Option B — Build MNN from source** (guaranteed compatibility):
+> ```bash
+> cargo build --release --features build-mnn-from-source
+> ```
+> This compiles MNN locally with your system's GCC, ensuring full ABI compatibility.
+>
+> **Option C — Use Docker** (portable, works anywhere):
+> ```bash
+> docker build --platform linux/amd64 -f Dockerfile.ubuntu20 -t ocr-cli:ubuntu20 .
+> docker run --rm -v $(pwd):/data ocr-cli:ubuntu20 /data/photo.jpg
+> ```
 
 ### MNN Linking Mode
 

@@ -744,11 +744,20 @@ fn link_libraries(
     }
 
     // Platform-specific C++ runtime
+    let static_libstdcpp = env::var("CARGO_FEATURE_STATIC_LIBSTDCPP").is_ok();
     match os {
         "macos" | "ios" => {
             println!("cargo:rustc-link-lib=c++");
         }
         "linux" => {
+            if static_libstdcpp {
+                // Static link libstdc++ and libgcc for compatibility with older
+                // Linux distros (e.g. Ubuntu 20.04) that lack GLIBCXX_3.4.29.
+                // This embeds the needed symbols into the binary instead of
+                // relying on the system libstdc++.so.6.
+                println!("cargo:rustc-link-arg=-static-libstdc++");
+                println!("cargo:rustc-link-arg=-static-libgcc");
+            }
             println!("cargo:rustc-link-lib=stdc++");
             println!("cargo:rustc-link-lib=m");
             println!("cargo:rustc-link-lib=pthread");

@@ -1,0 +1,71 @@
+# Docker 构建环境 — Ubuntu 20.04
+#
+# 用于构建兼容旧版 Linux (glibc 2.31 / GLIBCXX 3.4.28) 的 ocr-cli 二进制产物。
+#
+# 构建方式:
+#
+#   # 方案 1: 本地 Docker 构建 (ARM Mac 会通过 QEMU 模拟 x86_64，较慢)
+#   docker build --platform linux/amd64 -f Dockerfile.ubuntu20 -t ocr-cli:ubuntu20 .
+#   docker run --rm ocr-cli:ubuntu20
+#
+#   # 方案 2: 提取产物
+#   docker build --platform linux/amd64 -f Dockerfile.ubuntu20 -t ocr-cli:ubuntu20 .
+#   docker create --name tmp ocr-cli:ubuntu20
+#   docker cp tmp:/usr/local/bin/ocr-cli ./ocr-cli-ubuntu20
+#   docker rm tmp
+#
+#   # 方案 3: 直接使用 (CI 推荐)
+#   docker build --platform linux/amd64 -f Dockerfile.ubuntu20 -t ocr-cli:ubuntu20 .
+#   docker run --rm -v $(pwd):/data ocr-cli:ubuntu20 /data/photo.jpg
+
+FROM ubuntu:20.04 AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# 安装构建依赖
+RUN apt-get update && apt-get install -y \
+    curl \
+    build-essential \
+    cmake \
+    git \
+    pkg-config \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# 安装 Rust
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# 添加 x86_64-unknown-linux-gnu target (确保可用)
+RUN rustup target add x86_64-unknown-linux-gnu
+
+WORKDIR /build
+
+# 先复制依赖清单 (利用 Docker 缓存层)
+COPY Cargo.toml Cargo.lock* ./
+COPY build.rs ./
+COPY cpp/ cpp/
+COPY src/ src/
+
+# 首次构建 (下载依赖并编译 MNN from source)
+# 使用 build-mnn-from-source 确保与 Ubuntu 20.04 的 GCC 9 / glibc 2.31 兼容
+RUN cargo build --release --features build-mnn-from-source \
+    && cp target/release/ocr-cli /usr/local/bin/ocr-cli \
+    && cargo clean  # 清理构建缓存减小镜像
+
+# 运行时镜像 — 仅包含必要文件
+FROM ubuntu:20.04 AS runtime
+
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /usr/local/bin/ocr-cli /usr/local/bin/ocr-cli
+
+# 创建默认模型目录
+RUN mkdir -p /models
+
+ENV RUST_LOG=info
+
+ENTRYPOINT ["/usr/local/bin/ocr-cli"]
+CMD ["--help"]

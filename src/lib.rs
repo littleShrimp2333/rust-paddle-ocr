@@ -111,6 +111,7 @@
 //! - **PP-OCRv4**: Stable version, good compatibility
 //! - **PP-OCRv5**: Recommended version, supports multiple languages, higher accuracy
 //! - **PP-OCRv5 FP16**: Efficient version, faster inference, lower memory usage
+//! - **PP-OCRv6**: Latest version, improved accuracy for complex layouts and multi-language scenarios
 
 // Core modules
 pub mod det;

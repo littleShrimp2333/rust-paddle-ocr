@@ -19,6 +19,10 @@ jobs:
           # Linux x86_64
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+          # Ubuntu 20.04 (build MNN from source for glibc 2.31 compatibility)
+          - os: ubuntu-20.04
+            target: x86_64-unknown-linux-gnu
+            features: build-mnn-from-source
           # Windows x86_64
           - os: windows-2022
             target: x86_64-pc-windows-msvc
@@ -68,16 +72,23 @@ jobs:
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
         shell: bash
       
+      - name: Setup Ubuntu 20.04 Build Dependencies
+        if: matrix.os == 'ubuntu-20.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake git
+        shell: bash
+
       - name: Build
         uses: actions-rs/cargo@v1
         with:
           command: build
-          args: --verbose ${{ matrix.os == 'windows-2022' && '--release' || '' }} --target ${{ matrix.target }}
+          args: --verbose ${{ matrix.os == 'windows-2022' && '--release' || '' }} --target ${{ matrix.target }} ${{ matrix.features && format('--features {0}', matrix.features) || '' }}
       
       - name: Run tests
         if: contains(matrix.target, 'x86_64')
         uses: actions-rs/cargo@v1
         with:
           command: test
-          args: --verbose ${{ matrix.os == 'windows-2022' && '--release' || '' }} --target ${{ matrix.target }}
+          args: --verbose ${{ matrix.os == 'windows-2022' && '--release' || '' }} --target ${{ matrix.target }} ${{ matrix.features && format('--features {0}', matrix.features) || '' }}
 

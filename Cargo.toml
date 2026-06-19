@@ -48,6 +48,15 @@ mnn-static = []
 # 可选特性
 async = ["tokio", "futures"]
 
+# 静态链接 libstdc++ (解决旧版 Linux 如 Ubuntu 20.04 上 GLIBCXX_3.4.29 找不到的问题)
+static-libstdcpp = []
+
+# 内嵌模型文件到二进制 (三选一，生成独立分发自包含产物)
+# 用法: cargo build --release --features bundle-models-v6
+bundle-models-v4 = []
+bundle-models-v5 = []
+bundle-models-v6 = []
+
 # docs.rs 专用特性，跳过 C++ 编译
 docsrs = []
 
@@ -92,3 +101,7 @@ path = "examples/gpu_inference.rs"
 
 [profile.dev]
 opt-level = 3
+
+[[bin]]
+name = "ocr-cli"
+path = "src/main.rs"
