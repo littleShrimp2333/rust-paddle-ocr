@@ -21,9 +21,9 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # ── Linux (Ubuntu 20.04) ──────────────────────────────
-  build-linux-20_04:
-    runs-on: ubuntu-20.04
+  # ── Linux (Ubuntu 22.04) ──────────────────────────────
+  build-linux-22_04:
+    runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
       matrix:
@@ -45,13 +45,13 @@ jobs:
       - name: Build (${{ matrix.version }}, build-mnn-from-source)
         run: |
           cargo build --release --features bundle-models-${{ matrix.version }},build-mnn-from-source
-          cp target/release/ocr-cli ./ocr-cli-${{ matrix.version }}-ubuntu20.04-x86_64
+          cp target/release/ocr-cli ./ocr-cli-${{ matrix.version }}-ubuntu22.04-x86_64
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ocr-cli-${{ matrix.version }}-ubuntu20.04-x86_64
-          path: ocr-cli-${{ matrix.version }}-ubuntu20.04-x86_64
+          name: ocr-cli-${{ matrix.version }}-ubuntu22.04-x86_64
+          path: ocr-cli-${{ matrix.version }}-ubuntu22.04-x86_64
 
   # ── Linux (latest, static-libstdcpp) ──────────────────
   build-linux:
@@ -141,7 +141,7 @@ jobs:
   # ── Create GitHub Release ─────────────────────────────
   create-release:
     needs:
-      - build-linux-20_04
+      - build-linux-22_04
       - build-linux
       - build-macos
       - build-windows
