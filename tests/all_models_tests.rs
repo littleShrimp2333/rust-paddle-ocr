@@ -533,3 +533,329 @@ fn test_pipeline_with_ori_model_rotated_90() {
         results_no_ori.len()
     );
 }
+
+// ============================================================
+// PP-OCRv6 专项测试
+// ============================================================
+
+/// v6 字符集大小测试（v6 支持 50 种语言，字符集远大于 v4/v5）
+#[test]
+fn test_v6_charset_coverage() {
+    if !require_file(REC_V6) || !require_file(CHARSET_V6) {
+        return;
+    }
+
+    let rec = RecModel::from_file(REC_V6, CHARSET_V6, None)
+        .unwrap_or_else(|e| panic!("v6 识别模型创建失败: {:?}", e));
+
+    let size = rec.charset_size();
+    println!("[v6-charset] 字符集大小: {}", size);
+
+    // v6 支持 50 种语言，应远超 1000 个字符
+    assert!(
+        size > 5000,
+        "v6 字符集应 > 5000（支持 50 种语言），实际: {}",
+        size
+    );
+
+    // v5 字符集约 6623，v6 应有更多
+    let rec_v5 = RecModel::from_file(REC_V5, CHARSET_V5, None)
+        .unwrap_or_else(|e| panic!("v5 识别模型创建失败: {:?}", e));
+    let v5_size = rec_v5.charset_size();
+    println!("[v5-charset] 字符集大小: {}", v5_size);
+    println!(
+        "[对比] v6({}) vs v5({}), 差异: {}",
+        size,
+        v5_size,
+        size as i64 - v5_size as i64
+    );
+}
+
+/// v6 字符集内容验证（检查多语言特殊字符）
+#[test]
+fn test_v6_charset_content() {
+    if !require_file(CHARSET_V6) {
+        return;
+    }
+
+    let content = std::fs::read_to_string(CHARSET_V6).expect("读取 v6 字符集失败");
+    let chars: Vec<&str> = content.lines().filter(|l| !l.is_empty()).collect();
+
+    println!("[v6-charset-content] 总行数: {}", chars.len());
+
+    // 验证包含拉丁字母
+    assert!(
+        chars.contains(&"A") && chars.contains(&"z"),
+        "v6 字符集应包含基本拉丁字母"
+    );
+
+    // 验证包含中文字符
+    assert!(
+        chars.contains(&"中") || chars.contains(&"一"),
+        "v6 字符集应包含中文字符"
+    );
+
+    // 验证包含数字
+    assert!(
+        chars.contains(&"0") && chars.contains(&"9"),
+        "v6 字符集应包含数字"
+    );
+
+    // v6 特有：支持 50 种语言，应包含 emoji 或特殊符号
+    let has_emoji = chars.iter().any(|c| {
+        let c = c.chars().next().unwrap_or('\0');
+        ('🀀'..='🿿').contains(&c) || ('🌀'..='🛿').contains(&c)
+    });
+    println!("[v6-charset-content] 包含扩展 Unicode 符号: {}", has_emoji);
+}
+
+/// v6 + 方向模型 完整 pipeline（正常方向图片）
+#[test]
+fn test_pipeline_v6_with_ori_model() {
+    if !require_file(DET_V6)
+        || !require_file(REC_V6)
+        || !require_file(CHARSET_V6)
+        || !require_file(ORI_MODEL)
+        || !require_file(TEST_IMAGE)
+    {
+        return;
+    }
+
+    let engine =
+        OcrEngine::new_with_ori(DET_V6, REC_V6, CHARSET_V6, ORI_MODEL, None)
+            .expect("v6 带方向模型的 OCR 引擎创建失败");
+
+    let image = load_test_image();
+    let results = engine
+        .recognize(&image)
+        .expect("v6 带方向模型识别失败");
+
+    println!(
+        "[v6-pipeline+ori] 识别到 {} 个文本区域",
+        results.len()
+    );
+    for r in &results {
+        println!("  text={:?}  confidence={:.4}", r.text, r.confidence);
+    }
+
+    assert!(
+        !results.is_empty(),
+        "v6 带方向模型应识别到文本"
+    );
+}
+
+/// v6 + 方向模型 + 旋转 90° 图片（5.png）
+#[test]
+fn test_pipeline_v6_with_ori_model_rotated_90() {
+    if !require_file(DET_V6)
+        || !require_file(REC_V6)
+        || !require_file(CHARSET_V6)
+        || !require_file(ORI_MODEL)
+        || !require_file(TEST_IMAGE_ROTATED_90)
+    {
+        return;
+    }
+
+    let engine =
+        OcrEngine::new_with_ori(DET_V6, REC_V6, CHARSET_V6, ORI_MODEL, None)
+            .expect("v6 带方向模型的 OCR 引擎创建失败");
+
+    // 使用旋转 90° 的图片进行识别，方向模型应自动纠正方向
+    let image =
+        image::open(TEST_IMAGE_ROTATED_90).expect("无法打开测试图片 res/5.png");
+    let results = engine
+        .recognize(&image)
+        .expect("v6 旋转图片带方向模型识别失败");
+
+    println!(
+        "[v6-pipeline+ori+rotated90] 识别到 {} 个文本区域",
+        results.len()
+    );
+    for r in &results {
+        println!("  text={:?}  confidence={:.4}", r.text, r.confidence);
+    }
+
+    assert!(
+        !results.is_empty(),
+        "v6 旋转 90° 的图片经方向校正后应识别到文本"
+    );
+
+    // 对比不带方向模型的结果
+    let engine_no_ori =
+        OcrEngine::new(DET_V6, REC_V6, CHARSET_V6, None).expect("v6 无方向模型的 OCR 引擎创建失败");
+    let results_no_ori = engine_no_ori
+        .recognize(&image)
+        .expect("v6 旋转图片无方向模型识别失败");
+
+    println!(
+        "[v6-pipeline+no_ori+rotated90] 无方向模型识别到 {} 个文本区域",
+        results_no_ori.len()
+    );
+    for r in &results_no_ori {
+        println!("  text={:?}  confidence={:.4}", r.text, r.confidence);
+    }
+
+    println!(
+        "\n[v6 对比] 带方向模型: {} 个结果 vs 无方向模型: {} 个结果",
+        results.len(),
+        results_no_ori.len()
+    );
+}
+
+/// v6 from_bytes 引擎创建和推理
+#[test]
+fn test_v6_engine_from_bytes() {
+    if !require_file(DET_V6)
+        || !require_file(REC_V6)
+        || !require_file(CHARSET_V6)
+    {
+        return;
+    }
+
+    let det_bytes = std::fs::read(DET_V6).expect("读取 v6 det 模型失败");
+    let rec_bytes = std::fs::read(REC_V6).expect("读取 v6 rec 模型失败");
+    let keys_bytes = std::fs::read(CHARSET_V6).expect("读取 v6 字符集失败");
+
+    let engine = OcrEngine::from_bytes(&det_bytes, &rec_bytes, &keys_bytes, None)
+        .expect("v6 from_bytes 创建引擎失败");
+
+    if !require_file(TEST_IMAGE) {
+        return;
+    }
+
+    let image = load_test_image();
+    let results = engine
+        .recognize(&image)
+        .expect("v6 from_bytes 引擎识别失败");
+
+    println!(
+        "[v6-from_bytes] 识别到 {} 个文本区域",
+        results.len()
+    );
+    for r in &results {
+        println!("  text={:?}  confidence={:.4}", r.text, r.confidence);
+    }
+
+    assert!(
+        !results.is_empty(),
+        "v6 from_bytes 引擎应识别到文本"
+    );
+}
+
+/// v6 仅检测引擎
+#[test]
+fn test_v6_det_only_engine() {
+    if !require_file(DET_V6) || !require_file(TEST_IMAGE) {
+        return;
+    }
+
+    let engine = OcrEngine::det_only(DET_V6, None)
+        .expect("v6 仅检测引擎创建失败");
+
+    let image = load_test_image();
+    let boxes = engine.detect(&image).expect("v6 仅检测引擎检测失败");
+
+    println!("[v6-det-only] 检测到 {} 个文本框", boxes.len());
+    for b in &boxes {
+        println!(
+            "  score={:.4}  rect=({},{},{},{})",
+            b.score, b.rect.left(), b.rect.top(), b.rect.width(), b.rect.height()
+        );
+    }
+
+    assert!(!boxes.is_empty(), "v6 仅检测引擎应检测到文本框");
+}
+
+/// v6 仅识别引擎
+#[test]
+fn test_v6_rec_only_engine() {
+    if !require_file(DET_V5)  // 用 v5 det 做前置检测
+        || !require_file(REC_V6)
+        || !require_file(CHARSET_V6)
+        || !require_file(TEST_IMAGE)
+    {
+        return;
+    }
+
+    let engine = OcrEngine::rec_only(REC_V6, CHARSET_V6, None)
+        .expect("v6 仅识别引擎创建失败");
+
+    // 先用 v5 det 检测裁剪
+    let det = DetModel::from_file(DET_V5, None).expect("v5 检测模型创建失败");
+    let image = load_test_image();
+    let detections = det.detect_and_crop(&image).expect("检测裁剪失败");
+
+    if detections.is_empty() {
+        eprintln!("未检测到文本区域，跳过 v6 rec-only 测试");
+        return;
+    }
+
+    let (cropped, _) = &detections[0];
+    let result = engine
+        .recognize(cropped)
+        .expect("v6 仅识别引擎识别失败");
+
+    println!(
+        "[v6-rec-only] text={:?}  confidence={:.4}  char_scores={:?}",
+        result.text, result.confidence, result.char_scores
+    );
+
+    assert!(
+        result.confidence >= 0.0 && result.confidence <= 1.0,
+        "v6 仅识别引擎置信度应在 [0,1] 范围内"
+    );
+}
+
+/// v6 + ori from_bytes 完整测试
+#[test]
+fn test_v6_engine_from_bytes_with_ori() {
+    if !require_file(DET_V6)
+        || !require_file(REC_V6)
+        || !require_file(CHARSET_V6)
+        || !require_file(ORI_MODEL)
+    {
+        return;
+    }
+
+    let det_bytes = std::fs::read(DET_V6).expect("读取 v6 det 模型失败");
+    let rec_bytes = std::fs::read(REC_V6).expect("读取 v6 rec 模型失败");
+    let keys_bytes = std::fs::read(CHARSET_V6).expect("读取 v6 字符集失败");
+    let ori_bytes = std::fs::read(ORI_MODEL).expect("读取方向模型失败");
+
+    let engine = OcrEngine::from_bytes_with_ori(
+        &det_bytes,
+        &rec_bytes,
+        &keys_bytes,
+        &ori_bytes,
+        None,
+    )
+    .expect("v6 from_bytes_with_ori 创建引擎失败");
+
+    // 验证引擎包含方向模型
+    assert!(
+        engine.ori_model().is_some(),
+        "v6 from_bytes_with_ori 应包含方向模型"
+    );
+
+    if !require_file(TEST_IMAGE) {
+        return;
+    }
+
+    let image = load_test_image();
+    let results = engine
+        .recognize(&image)
+        .expect("v6 from_bytes_with_ori 识别失败");
+
+    println!(
+        "[v6-from_bytes+ori] 识别到 {} 个文本区域",
+        results.len()
+    );
+    for r in &results {
+        println!("  text={:?}  confidence={:.4}", r.text, r.confidence);
+    }
+
+    assert!(
+        !results.is_empty(),
+        "v6 from_bytes_with_ori 引擎应识别到文本"
+    );
+}
