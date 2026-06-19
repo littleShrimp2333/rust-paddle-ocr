@@ -4,17 +4,160 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      model_version:
+        description: '模型版本 (v4/v5/v6/all)'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - v4
+          - v5
+          - v6
+          - all
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
-  release:
-    name: Create GitHub Release
-    runs-on: ubuntu-latest
+  # ── Linux (Ubuntu 20.04) ──────────────────────────────
+  build-linux-20_04:
+    runs-on: ubuntu-20.04
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [v4, v5, v6]
     steps:
       - uses: actions/checkout@v4
 
-      - name: Create release
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake git
+
+      - name: Build (${{ matrix.version }}, build-mnn-from-source)
+        run: |
+          cargo build --release --features bundle-models-${{ matrix.version }},build-mnn-from-source
+          cp target/release/ocr-cli ./ocr-cli-${{ matrix.version }}-ubuntu20.04-x86_64
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ocr-cli-${{ matrix.version }}-ubuntu20.04-x86_64
+          path: ocr-cli-${{ matrix.version }}-ubuntu20.04-x86_64
+
+  # ── Linux (latest, static-libstdcpp) ──────────────────
+  build-linux:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [v4, v5, v6]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Build (${{ matrix.version }}, static-libstdcpp)
+        run: |
+          cargo build --release --features bundle-models-${{ matrix.version }},static-libstdcpp
+          cp target/release/ocr-cli ./ocr-cli-${{ matrix.version }}-linux-x86_64
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ocr-cli-${{ matrix.version }}-linux-x86_64
+          path: ocr-cli-${{ matrix.version }}-linux-x86_64
+
+  # ── macOS (arm64 + x86_64) ────────────────────────────
+  build-macos:
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [v4, v5, v6]
+        target:
+          - aarch64-apple-darwin
+          - x86_64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+          target: ${{ matrix.target }}
+
+      - name: Build (${{ matrix.version }}, ${{ matrix.target }})
+        run: |
+          cargo build --release --target ${{ matrix.target }} --features bundle-models-${{ matrix.version }}
+          cp target/${{ matrix.target }}/release/ocr-cli ./ocr-cli-${{ matrix.version }}-${{ matrix.target }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ocr-cli-${{ matrix.version }}-${{ matrix.target }}
+          path: ocr-cli-${{ matrix.version }}-${{ matrix.target }}
+
+  # ── Windows ───────────────────────────────────────────
+  build-windows:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [v4, v5, v6]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Build (${{ matrix.version }})
+        run: |
+          cargo build --release --features bundle-models-${{ matrix.version }}
+          copy target\release\ocr-cli.exe ocr-cli-${{ matrix.version }}-windows-x86_64.exe
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ocr-cli-${{ matrix.version }}-windows-x86_64
+          path: ocr-cli-${{ matrix.version }}-windows-x86_64.exe
+
+  # ── Create GitHub Release ─────────────────────────────
+  create-release:
+    needs:
+      - build-linux-20_04
+      - build-linux
+      - build-macos
+      - build-windows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List artifacts
+        run: find artifacts -type f -exec ls -lh {} \;
+
+      - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
+          files: artifacts/**/*
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
