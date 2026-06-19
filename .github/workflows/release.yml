@@ -6,8 +6,13 @@ on:
       - 'v*'
   workflow_dispatch:
     inputs:
+      version:
+        description: '发布版本号 (例如 2.2.3，留空则自动使用 Cargo.toml 版本)'
+        required: false
+        default: ''
+        type: string
       model_version:
-        description: '模型版本 (v4/v5/v6/all)'
+        description: '模型版本'
         required: true
         default: 'all'
         type: choice
@@ -21,8 +26,57 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # ── Linux (Ubuntu 22.04) ──────────────────────────────
+  # ── 创建 Tag (仅在 workflow_dispatch 手动触发时) ────────
+  create-tag:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            VER="${{ github.event.inputs.version }}"
+          else
+            VER=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          fi
+          echo "ver=$VER" >> $GITHUB_OUTPUT
+          echo "Will create tag: v$VER"
+
+      - name: Check if tag already exists
+        id: check_tag
+        run: |
+          TAG="v${{ steps.version.outputs.ver }}"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists, skipping creation"
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create and push tag
+        id: tag
+        if: steps.check_tag.outputs.exists != 'true'
+        run: |
+          TAG="v${{ steps.version.outputs.ver }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "Release $TAG"
+          git push origin "$TAG"
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "✅ Tag $TAG created and pushed"
+
+  # ── Linux (Ubuntu 22.04, build-mnn-from-source) ────────
   build-linux-22_04:
+    needs: create-tag
+    if: |
+      always() &&
+      (needs.create-tag.result == 'success' || needs.create-tag.result == 'skipped')
     runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
@@ -43,11 +97,19 @@ jobs:
           sudo apt-get install -y cmake git
 
       - name: Build (${{ matrix.version }}, build-mnn-from-source)
+        if: |
+          github.event_name == 'push' ||
+          github.event.inputs.model_version == 'all' ||
+          github.event.inputs.model_version == matrix.version
         run: |
           cargo build --release --features bundle-models-${{ matrix.version }},build-mnn-from-source
           cp target/release/ocr-cli ./ocr-cli-${{ matrix.version }}-ubuntu22.04-x86_64
 
       - name: Upload artifact
+        if: |
+          github.event_name == 'push' ||
+          github.event.inputs.model_version == 'all' ||
+          github.event.inputs.model_version == matrix.version
         uses: actions/upload-artifact@v4
         with:
           name: ocr-cli-${{ matrix.version }}-ubuntu22.04-x86_64
@@ -55,6 +117,10 @@ jobs:
 
   # ── Linux (latest, static-libstdcpp) ──────────────────
   build-linux:
+    needs: create-tag
+    if: |
+      always() &&
+      (needs.create-tag.result == 'success' || needs.create-tag.result == 'skipped')
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -70,11 +136,19 @@ jobs:
           override: true
 
       - name: Build (${{ matrix.version }}, static-libstdcpp)
+        if: |
+          github.event_name == 'push' ||
+          github.event.inputs.model_version == 'all' ||
+          github.event.inputs.model_version == matrix.version
         run: |
           cargo build --release --features bundle-models-${{ matrix.version }},static-libstdcpp
           cp target/release/ocr-cli ./ocr-cli-${{ matrix.version }}-linux-x86_64
 
       - name: Upload artifact
+        if: |
+          github.event_name == 'push' ||
+          github.event.inputs.model_version == 'all' ||
+          github.event.inputs.model_version == matrix.version
         uses: actions/upload-artifact@v4
         with:
           name: ocr-cli-${{ matrix.version }}-linux-x86_64
@@ -82,6 +156,10 @@ jobs:
 
   # ── macOS (arm64 + x86_64) ────────────────────────────
   build-macos:
+    needs: create-tag
+    if: |
+      always() &&
+      (needs.create-tag.result == 'success' || needs.create-tag.result == 'skipped')
     runs-on: macos-latest
     strategy:
       fail-fast: false
@@ -101,11 +179,19 @@ jobs:
           target: ${{ matrix.target }}
 
       - name: Build (${{ matrix.version }}, ${{ matrix.target }})
+        if: |
+          github.event_name == 'push' ||
+          github.event.inputs.model_version == 'all' ||
+          github.event.inputs.model_version == matrix.version
         run: |
           cargo build --release --target ${{ matrix.target }} --features bundle-models-${{ matrix.version }}
           cp target/${{ matrix.target }}/release/ocr-cli ./ocr-cli-${{ matrix.version }}-${{ matrix.target }}
 
       - name: Upload artifact
+        if: |
+          github.event_name == 'push' ||
+          github.event.inputs.model_version == 'all' ||
+          github.event.inputs.model_version == matrix.version
         uses: actions/upload-artifact@v4
         with:
           name: ocr-cli-${{ matrix.version }}-${{ matrix.target }}
@@ -113,6 +199,10 @@ jobs:
 
   # ── Windows ───────────────────────────────────────────
   build-windows:
+    needs: create-tag
+    if: |
+      always() &&
+      (needs.create-tag.result == 'success' || needs.create-tag.result == 'skipped')
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -128,11 +218,19 @@ jobs:
           override: true
 
       - name: Build (${{ matrix.version }})
+        if: |
+          github.event_name == 'push' ||
+          github.event.inputs.model_version == 'all' ||
+          github.event.inputs.model_version == matrix.version
         run: |
           cargo build --release --features bundle-models-${{ matrix.version }}
           copy target\release\ocr-cli.exe ocr-cli-${{ matrix.version }}-windows-x86_64.exe
 
       - name: Upload artifact
+        if: |
+          github.event_name == 'push' ||
+          github.event.inputs.model_version == 'all' ||
+          github.event.inputs.model_version == matrix.version
         uses: actions/upload-artifact@v4
         with:
           name: ocr-cli-${{ matrix.version }}-windows-x86_64
@@ -145,8 +243,29 @@ jobs:
       - build-linux
       - build-macos
       - build-windows
+    if: |
+      always() &&
+      (!contains(needs.*.result, 'failure')) &&
+      (!contains(needs.*.result, 'cancelled'))
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine release tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            if [ -n "${{ github.event.inputs.version }}" ]; then
+              VER="${{ github.event.inputs.version }}"
+            else
+              VER=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+            fi
+            echo "tag=v$VER" >> $GITHUB_OUTPUT
+          else
+            echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          fi
+          echo "Release tag: v${VER}"
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -157,6 +276,7 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.tag.outputs.tag }}
           files: artifacts/**/*
           generate_release_notes: true
         env:
