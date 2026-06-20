@@ -41,8 +41,22 @@ jobs:
       - name: Run tests
         run: cargo test --release
       
+      - name: Check crates.io token
+        id: check_token
+        run: |
+          if [ -n "$TOKEN" ]; then
+            echo "has_token=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_token=false" >> $GITHUB_OUTPUT
+            echo "::warning::CRATES_IO_TOKEN secret not set, skipping publish to crates.io"
+          fi
+        env:
+          TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+
       - name: Login to crates.io
+        if: steps.check_token.outputs.has_token == 'true'
         run: cargo login ${{ secrets.CRATES_IO_TOKEN }}
-      
+
       - name: Publish to crates.io
+        if: steps.check_token.outputs.has_token == 'true'
         run: cargo publish --allow-dirty --no-verify
