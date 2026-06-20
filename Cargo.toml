@@ -74,6 +74,7 @@ cc = "1.0"
 bindgen = "0.69"
 
 [dependencies]
+libc = "0.2"
 image = "0.25"
 imageproc = "0.25"
 ndarray = { version = "0.16", features = ["rayon"] }

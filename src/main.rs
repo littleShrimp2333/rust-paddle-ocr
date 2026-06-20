@@ -133,6 +133,15 @@ fn main() {
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args = parse_args();
 
+    // JSON 模式: 重定向 stderr 到 /dev/null，确保 stdout 输出纯 JSON
+    #[cfg(unix)]
+    if args.json {
+        use std::os::unix::io::AsRawFd;
+        if let Ok(devnull) = std::fs::OpenOptions::new().write(true).open("/dev/null") {
+            unsafe { libc::dup2(devnull.as_raw_fd(), libc::STDERR_FILENO); }
+        }
+    }
+
     if args.help {
         print!("{HELP}");
         return Ok(());
