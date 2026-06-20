@@ -80,7 +80,9 @@ const HELP: &str = r#"OCR CLI — PaddleOCR 命令行工具
   <image>              要识别的图片路径
 
 选项:
+  --path <image>       图片路径 (兼容模式，等价于位置参数)
   -m, --model <ver>    选择模型版本: v4, v5, v6 (默认: v5)
+                       -m json 等价于 --json (输出 JSON 格式)
   --det <path>         检测模型路径 (覆盖 --model 的默认值)
   --rec <path>         识别模型路径 (覆盖 --model 的默认值)
   --keys <path>        字符集文件路径 (覆盖 --model 的默认值)
@@ -99,6 +101,8 @@ const HELP: &str = r#"OCR CLI — PaddleOCR 命令行工具
   ocr-cli photo.jpg -m v6               # v6 模型
   ocr-cli photo.jpg -m v4               # v4 模型
   ocr-cli photo.jpg --json
+  ocr-cli photo.jpg -m json             # JSON 输出 (兼容模式)
+  ocr-cli --path photo.jpg -m json      # 兼容外部调用
   ocr-cli photo.jpg -m v6 --backend metal --output annotated.png
   ocr-cli --list-models
 "#;
@@ -304,13 +308,17 @@ fn parse_args() -> CliArgs {
                     eprintln!("警告: 内嵌模式已固定为 {} 模型，--model 参数被忽略", EMBEDDED_VERSION);
                 }
                 i += 1;
-                if !is_bundled {
-                    let ms = match raw.get(i).map(|s| s.as_str()) {
-                        Some("v4") => &MODEL_V4,
-                        Some("v5") => &MODEL_V5,
-                        Some("v6") => &MODEL_V6,
+                let val = raw.get(i).cloned().unwrap_or_default();
+                // 兼容 -m json 作为 --json 的别名
+                if val == "json" {
+                    args.json = true;
+                } else if !is_bundled {
+                    let ms = match val.as_str() {
+                        "v4" => &MODEL_V4,
+                        "v5" => &MODEL_V5,
+                        "v6" => &MODEL_V6,
                         other => {
-                            eprintln!("警告: 未知模型版本 '{:?}'，使用 v5", other.unwrap_or(""));
+                            eprintln!("警告: 未知模型版本 '{:?}'，使用 v5", other);
                             &MODEL_V5
                         }
                     };
@@ -318,6 +326,10 @@ fn parse_args() -> CliArgs {
                     args.rec_model = Some(PathBuf::from(DEFAULT_MODEL_DIR).join(ms.rec));
                     args.keys = Some(PathBuf::from(DEFAULT_MODEL_DIR).join(ms.keys));
                 }
+            }
+            "--path" => {
+                i += 1;
+                args.image = PathBuf::from(raw.get(i).cloned().unwrap_or_default());
             }
             "--det" => {
                 i += 1;
