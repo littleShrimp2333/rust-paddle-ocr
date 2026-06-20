@@ -1097,7 +1097,7 @@ dependencies = [
 
 [[package]]
 name = "ocr-rs"
-version = "2.2.2"
+version = "2.3.2"
 dependencies = [
  "bindgen",
  "cc",
@@ -1108,9 +1108,11 @@ dependencies = [
  "futures",
  "image",
  "imageproc",
+ "libc",
  "log",
  "ndarray",
  "rayon",
+ "serde_json",
  "thiserror 2.0.16",
  "tokio",
 ]

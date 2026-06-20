@@ -133,14 +133,23 @@ fn main() {
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args = parse_args();
 
-    // JSON 模式: 重定向 stderr 到 /dev/null，确保 stdout 输出纯 JSON
+    // JSON 模式: 重定向 stdout/stderr 到 /dev/null，之后通过 saved fd 输出纯 JSON
     #[cfg(unix)]
-    if args.json {
+    let saved_stdout = if args.json {
         use std::os::unix::io::AsRawFd;
+        let saved = unsafe { libc::dup(libc::STDOUT_FILENO) };
         if let Ok(devnull) = std::fs::OpenOptions::new().write(true).open("/dev/null") {
-            unsafe { libc::dup2(devnull.as_raw_fd(), libc::STDERR_FILENO); }
+            unsafe {
+                libc::dup2(devnull.as_raw_fd(), libc::STDOUT_FILENO);
+                libc::dup2(devnull.as_raw_fd(), libc::STDERR_FILENO);
+            }
         }
-    }
+        Some(saved)
+    } else {
+        None
+    };
+    #[cfg(not(unix))]
+    let saved_stdout: Option<i32> = None;
 
     if args.help {
         print!("{HELP}");
@@ -178,7 +187,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let results = engine.recognize(&image)?;
 
     if args.json {
-        output_json(&results, args.json || args.quiet)?;
+        #[cfg(unix)]
+        if let Some(fd) = saved_stdout {
+            // 直接写 JSON 到 saved stdout fd，绕过被 MNN 污染的 stdout
+            let json = format_json(&results);
+            let buf = json.as_bytes();
+            unsafe { libc::write(fd, buf.as_ptr() as *const _, buf.len()); }
+            unsafe { libc::close(fd); }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = output_json(&results, true);
+        }
     } else {
         output_text(&results, args.quiet);
     }
@@ -449,7 +469,7 @@ fn output_text(results: &[ocr_rs::OcrResult_], quiet: bool) {
     }
 }
 
-fn output_json(results: &[ocr_rs::OcrResult_], quiet: bool) -> Result<(), Box<dyn std::error::Error>> {
+fn format_json(results: &[ocr_rs::OcrResult_]) -> String {
     let avg = if results.is_empty() {
         0.0
     } else {
@@ -457,7 +477,10 @@ fn output_json(results: &[ocr_rs::OcrResult_], quiet: bool) -> Result<(), Box<dy
             / 1000.0
     };
 
-    print!(
+    let mut out = String::new();
+    use std::fmt::Write;
+    let _ = write!(
+        out,
         "{{\n  \"count\": {},\n  \"avg_confidence\": {:.3},\n  \"results\": [\n",
         results.len(),
         avg
@@ -466,12 +489,14 @@ fn output_json(results: &[ocr_rs::OcrResult_], quiet: bool) -> Result<(), Box<dy
     for (i, r) in results.iter().enumerate() {
         let bbox = &r.bbox;
         let comma = if i + 1 < results.len() { "," } else { "" };
-        print!("    {{\n      \"text\": {:?},\n", r.text);
-        print!(
+        let _ = write!(out, "    {{\n      \"text\": {:?},\n", r.text);
+        let _ = write!(
+            out,
             "      \"confidence\": {:.3},\n",
             (r.confidence * 1000.0).round() / 1000.0
         );
-        print!(
+        let _ = write!(
+            out,
             "      \"box\": {{\"left\": {}, \"top\": {}, \"width\": {}, \"height\": {}}}",
             bbox.rect.left(),
             bbox.rect.top(),
@@ -479,20 +504,25 @@ fn output_json(results: &[ocr_rs::OcrResult_], quiet: bool) -> Result<(), Box<dy
             bbox.rect.height(),
         );
         if let Some(ref pts) = bbox.points {
-            print!(",\n      \"points\": [");
+            let _ = write!(out, ",\n      \"points\": [");
             for (j, p) in pts.iter().enumerate() {
                 if j > 0 {
-                    print!(", ");
+                    let _ = write!(out, ", ");
                 }
-                print!("{{\"x\": {}, \"y\": {}}}", p.x, p.y);
+                let _ = write!(out, "{{\"x\": {}, \"y\": {}}}", p.x, p.y);
             }
-            print!("]");
+            let _ = write!(out, "]");
         }
-        println!("\n    }}{}", comma);
+        let _ = writeln!(out, "\n    }}{}", comma);
     }
 
-    println!("  ]\n}}");
+    let _ = write!(out, "  ]\n}}");
+    out
+}
 
+#[allow(dead_code)]
+fn output_json(results: &[ocr_rs::OcrResult_], quiet: bool) -> Result<(), Box<dyn std::error::Error>> {
+    print!("{}", format_json(results));
     if !quiet {
         eprintln!("\n✅ 已输出 {} 个结果 (JSON)", results.len());
     }
@@ -1065,7 +1095,7 @@ mod tests {
     }
 
     // ============================================================
-    // output_text / output_json 测试
+    // output_text / format_json / output_json 测试
     // ============================================================
 
     fn make_result(text: &str, conf: f32, left: i32, top: i32, w: u32, h: u32) -> ocr_rs::OcrResult_ {
@@ -1075,6 +1105,186 @@ mod tests {
         let bbox = TextBox::new(rect, conf);
         ocr_rs::OcrResult_::new(text.to_string(), conf, bbox)
     }
+
+    fn make_result_with_points(
+        text: &str, conf: f32, left: i32, top: i32, w: u32, h: u32,
+        points: [(f32, f32); 4],
+    ) -> ocr_rs::OcrResult_ {
+        use imageproc::point::Point;
+        use imageproc::rect::Rect;
+        use ocr_rs::TextBox;
+        let rect = Rect::at(left, top).of_size(w, h);
+        let pts = [
+            Point::new(points[0].0, points[0].1),
+            Point::new(points[1].0, points[1].1),
+            Point::new(points[2].0, points[2].1),
+            Point::new(points[3].0, points[3].1),
+        ];
+        let bbox = TextBox::with_points(rect, conf, pts);
+        ocr_rs::OcrResult_::new(text.to_string(), conf, bbox)
+    }
+
+    // ── format_json 纯函数测试 ────────────────────────────
+
+    #[test]
+    fn test_format_json_empty() {
+        let json = format_json(&[]);
+        let v: serde_json::Value = serde_json::from_str(&json).expect("应该是合法 JSON");
+        assert_eq!(v["count"].as_u64(), Some(0));
+        assert!(v["avg_confidence"].as_f64().unwrap() >= 0.0);
+        assert!(v["results"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_format_json_single() {
+        let results = vec![make_result("Hello", 0.95, 10, 20, 100, 30)];
+        let json = format_json(&results);
+        let v: serde_json::Value = serde_json::from_str(&json).expect("应该是合法 JSON");
+        assert_eq!(v["count"].as_u64(), Some(1));
+        let arr = v["results"].as_array().unwrap();
+        assert_eq!(arr[0]["text"].as_str(), Some("Hello"));
+        assert_eq!(arr[0]["box"]["left"].as_i64(), Some(10));
+        assert_eq!(arr[0]["box"]["top"].as_i64(), Some(20));
+        assert_eq!(arr[0]["box"]["width"].as_u64(), Some(100));
+        assert_eq!(arr[0]["box"]["height"].as_u64(), Some(30));
+    }
+
+    #[test]
+    fn test_format_json_multiple() {
+        let results = vec![
+            make_result("Hello", 0.95, 10, 20, 100, 30),
+            make_result("World", 0.88, 10, 60, 120, 30),
+        ];
+        let json = format_json(&results);
+        let v: serde_json::Value = serde_json::from_str(&json).expect("应该是合法 JSON");
+        assert_eq!(v["count"].as_u64(), Some(2));
+        let arr = v["results"].as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        // 第一个不加逗号，第二个没有逗号后缀
+        assert_eq!(arr[0]["text"].as_str(), Some("Hello"));
+        assert_eq!(arr[1]["text"].as_str(), Some("World"));
+    }
+
+    #[test]
+    fn test_format_json_cjk_text() {
+        let results = vec![
+            make_result("中文测试", 0.95, 10, 20, 100, 30),
+            make_result("上午10:086月8日周一日", 0.97, 20, 50, 300, 40),
+        ];
+        let json = format_json(&results);
+        let v: serde_json::Value = serde_json::from_str(&json).expect("CJK JSON 应合法");
+        assert_eq!(v["results"][0]["text"].as_str(), Some("中文测试"));
+        assert_eq!(v["results"][1]["text"].as_str(), Some("上午10:086月8日周一日"));
+    }
+
+    #[test]
+    fn test_format_json_special_chars() {
+        // 包含双引号、反斜杠、换行符等特殊字符
+        let results = vec![
+            make_result(r#"say "hello""#, 0.90, 0, 0, 100, 30),
+            make_result(r#"path\to\file"#, 0.85, 0, 50, 100, 30),
+        ];
+        let json = format_json(&results);
+        let v: serde_json::Value = serde_json::from_str(&json).expect("特殊字符 JSON 应合法");
+        assert_eq!(v["results"][0]["text"].as_str(), Some(r#"say "hello""#));
+        assert_eq!(v["results"][1]["text"].as_str(), Some(r#"path\to\file"#));
+    }
+
+    #[test]
+    fn test_format_json_with_points() {
+        let results = vec![make_result_with_points(
+            "Poly",
+            0.92, 0, 0, 100, 30,
+            [(0.0, 0.0), (100.0, 0.0), (100.0, 30.0), (0.0, 30.0)],
+        )];
+        let json = format_json(&results);
+        let v: serde_json::Value = serde_json::from_str(&json).expect("带 points 的 JSON 应合法");
+        let pts = v["results"][0]["points"].as_array().unwrap();
+        assert_eq!(pts.len(), 4);
+        assert_eq!(pts[0]["x"].as_f64(), Some(0.0));
+        assert_eq!(pts[0]["y"].as_f64(), Some(0.0));
+        assert_eq!(pts[3]["x"].as_f64(), Some(0.0));
+        assert_eq!(pts[3]["y"].as_f64(), Some(30.0));
+    }
+
+    #[test]
+    fn test_format_json_no_points() {
+        let results = vec![make_result("NoPoly", 0.90, 0, 0, 100, 30)];
+        let json = format_json(&results);
+        // points 字段不应存在
+        assert!(!json.contains("\"points\""), "无 points 时不应输出 points 字段");
+    }
+
+    #[test]
+    fn test_format_json_confidence_range() {
+        // 边界值测试
+        let results = vec![
+            make_result("Min", 0.0, 0, 0, 10, 10),
+            make_result("Mid", 0.5, 0, 0, 10, 10),
+            make_result("Max", 1.0, 0, 0, 10, 10),
+        ];
+        let json = format_json(&results);
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let arr = v["results"].as_array().unwrap();
+        assert!((arr[0]["confidence"].as_f64().unwrap() - 0.0).abs() < 0.001);
+        assert!((arr[2]["confidence"].as_f64().unwrap() - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_format_json_avg_confidence() {
+        let results = vec![
+            make_result("A", 0.6, 0, 0, 10, 10),
+            make_result("B", 0.8, 0, 0, 10, 10),
+        ];
+        let json = format_json(&results);
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let avg = v["avg_confidence"].as_f64().unwrap();
+        assert!((avg - 0.7).abs() < 0.01, "avg 应约为 0.7，实际: {}", avg);
+    }
+
+    #[test]
+    fn test_format_json_valid_and_clean() {
+        // 确保输出是合法 JSON，以 } 结束，没有尾部多余内容
+        let results = vec![
+            make_result("Test", 0.9, 0, 0, 10, 10),
+            make_result("Line2", 0.8, 0, 50, 10, 10),
+        ];
+        let json = format_json(&results);
+        // 1) 可被解析
+        let _v: serde_json::Value = serde_json::from_str(&json).expect("应是合法 JSON");
+        // 2) 以 } 结束
+        assert!(json.trim_end().ends_with('}'), "JSON 应以 }} 结束");
+        // 3) 第一行不是空行（无前导空白）
+        assert!(json.starts_with('{'), "JSON 应以 {{ 开头");
+        // 4) 不包含诊断信息（MNN、警告等）
+        assert!(!json.contains("device supports"), "不应包含 MNN 诊断");
+        assert!(!json.contains("警告"), "不应包含警告");
+        assert!(!json.contains("🔍"), "不应包含 banner");
+    }
+
+    // ── output_json 测试 (文本模式保留兼容) ─────────────────
+
+    #[test]
+    fn test_output_json_empty() {
+        let r = output_json(&[], false);
+        assert!(r.is_ok());
+    }
+
+    #[test]
+    fn test_output_json_single() {
+        let results = vec![make_result("Hello", 0.95, 10, 20, 100, 30)];
+        let r = output_json(&results, false);
+        assert!(r.is_ok());
+    }
+
+    #[test]
+    fn test_output_json_quiet() {
+        let results = vec![make_result("Test", 0.90, 0, 0, 50, 20)];
+        let r = output_json(&results, true);
+        assert!(r.is_ok());
+    }
+
+    // ── output_text 测试 ────────────────────────────────────
 
     #[test]
     fn test_output_text_empty() {
@@ -1101,35 +1311,61 @@ mod tests {
         output_text(&results, false);
     }
 
+    // ── json + path 组合 args 测试 ──────────────────────────
+
     #[test]
-    fn test_output_json_empty() {
-        let results: Vec<ocr_rs::OcrResult_> = vec![];
-        let r = output_json(&results, false);
-        assert!(r.is_ok());
+    fn test_args_path_m_json() {
+        // 外部调用: --path <img> -m json
+        let a = argv(&["--path", "photo.jpg", "-m", "json"]);
+        let args = parse_args_impl(&a);
+        assert_eq!(args.image, PathBuf::from("photo.jpg"));
+        assert!(args.json);
+        assert!(!args.quiet);
     }
 
     #[test]
-    fn test_output_json_single() {
-        let results = vec![make_result("Hello", 0.95, 10, 20, 100, 30)];
-        let r = output_json(&results, false);
-        assert!(r.is_ok());
+    fn test_args_path_m_json_reversed() {
+        // -m json 在前
+        let a = argv(&["-m", "json", "--path", "photo.jpg"]);
+        let args = parse_args_impl(&a);
+        assert_eq!(args.image, PathBuf::from("photo.jpg"));
+        assert!(args.json);
     }
 
     #[test]
-    fn test_output_json_multiple() {
-        let results = vec![
-            make_result("Hello", 0.95, 10, 20, 100, 30),
-            make_result("World", 0.88, 10, 60, 120, 30),
-        ];
-        let r = output_json(&results, false);
-        assert!(r.is_ok());
+    fn test_args_positional_with_json() {
+        let a = argv(&["photo.jpg", "--json"]);
+        let args = parse_args_impl(&a);
+        assert_eq!(args.image, PathBuf::from("photo.jpg"));
+        assert!(args.json);
+        assert!(!args.quiet);
     }
 
     #[test]
-    fn test_output_json_quiet() {
-        let results = vec![make_result("Test", 0.90, 0, 0, 50, 20)];
-        let r = output_json(&results, true);
-        assert!(r.is_ok());
+    fn test_args_json_with_positional() {
+        let a = argv(&["--json", "photo.jpg"]);
+        let args = parse_args_impl(&a);
+        assert_eq!(args.image, PathBuf::from("photo.jpg"));
+        assert!(args.json);
+    }
+
+    #[test]
+    fn test_args_json_m_json_equivalent() {
+        let a1 = argv(&["img.png", "--json"]);
+        let a2 = argv(&["img.png", "-m", "json"]);
+        let args1 = parse_args_impl(&a1);
+        let args2 = parse_args_impl(&a2);
+        assert_eq!(args1.json, args2.json);
+        assert_eq!(args1.quiet, args2.quiet);
+        assert_eq!(args1.image, args2.image);
+    }
+
+    #[test]
+    fn test_args_json_quiet_combined() {
+        let a = argv(&["img.png", "--json", "--quiet"]);
+        let args = parse_args_impl(&a);
+        assert!(args.json);
+        assert!(args.quiet);
     }
 
     // ============================================================
