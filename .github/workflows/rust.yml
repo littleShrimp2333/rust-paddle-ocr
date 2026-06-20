@@ -19,10 +19,10 @@ jobs:
           # Linux x86_64
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-          # Ubuntu 22.04 (build MNN from source for glibc compatibility)
+          # Ubuntu 22.04 (build MNN from source + static libstdc++ for legacy glibc compatibility)
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
-            features: build-mnn-from-source
+            features: build-mnn-from-source,static-libstdcpp
           # Windows x86_64
           - os: windows-2022
             target: x86_64-pc-windows-msvc
