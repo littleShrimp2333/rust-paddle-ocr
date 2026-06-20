@@ -109,8 +109,15 @@ jobs:
           github.event.inputs.model_version == 'all' ||
           github.event.inputs.model_version == matrix.version
         run: |
-          export LIBCLANG_PATH=$(find /usr/lib -name "libclang.so*" -type f 2>/dev/null | head -1 | xargs dirname 2>/dev/null || echo "")
+          # bindgen needs libclang.so; ubuntu:20.04 provides libclang-10.so.1
+          LIBCLANG_DIR="/usr/lib/llvm-10/lib"
+          if [ -f "$LIBCLANG_DIR/libclang-10.so.1" ] && [ ! -f "$LIBCLANG_DIR/libclang.so" ]; then
+            ln -sf "$LIBCLANG_DIR/libclang-10.so.1" "$LIBCLANG_DIR/libclang.so"
+          fi
+          export LIBCLANG_PATH="$LIBCLANG_DIR"
+          export LD_LIBRARY_PATH="$LIBCLANG_DIR:$LD_LIBRARY_PATH"
           echo "LIBCLANG_PATH=$LIBCLANG_PATH"
+          ls -la "$LIBCLANG_PATH"/libclang*
           cargo build --release --features bundle-models-${{ matrix.version }},build-mnn-from-source,static-libstdcpp
           cp target/release/ocr-cli ./ocr-cli-${{ matrix.version }}-linux-legacy-x86_64
 
