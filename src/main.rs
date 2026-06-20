@@ -497,7 +497,7 @@ fn format_json(results: &[ocr_rs::OcrResult_]) -> String {
         );
         let _ = write!(
             out,
-            "      \"box\": {{\"left\": {}, \"top\": {}, \"width\": {}, \"height\": {}}}",
+            "      \"position\": {{\"left\": {}, \"top\": {}, \"width\": {}, \"height\": {}}}",
             bbox.rect.left(),
             bbox.rect.top(),
             bbox.rect.width(),
@@ -1143,10 +1143,10 @@ mod tests {
         assert_eq!(v["count"].as_u64(), Some(1));
         let arr = v["results"].as_array().unwrap();
         assert_eq!(arr[0]["text"].as_str(), Some("Hello"));
-        assert_eq!(arr[0]["box"]["left"].as_i64(), Some(10));
-        assert_eq!(arr[0]["box"]["top"].as_i64(), Some(20));
-        assert_eq!(arr[0]["box"]["width"].as_u64(), Some(100));
-        assert_eq!(arr[0]["box"]["height"].as_u64(), Some(30));
+        assert_eq!(arr[0]["position"]["left"].as_i64(), Some(10));
+        assert_eq!(arr[0]["position"]["top"].as_i64(), Some(20));
+        assert_eq!(arr[0]["position"]["width"].as_u64(), Some(100));
+        assert_eq!(arr[0]["position"]["height"].as_u64(), Some(30));
     }
 
     #[test]
