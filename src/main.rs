@@ -258,12 +258,23 @@ fn get_embedded_models() -> (&'static [u8], &'static [u8], &'static [u8]) {
 
 fn parse_args() -> CliArgs {
     let raw: Vec<String> = env::args().collect();
-    let is_bundled = !EMBEDDED_VERSION.is_empty();
-
     if raw.len() < 2 {
         print!("{HELP}");
         process::exit(0);
     }
+    let args = parse_args_impl(&raw);
+    if args.image.as_os_str().is_empty() && !args.help && !args.version && !args.list_models {
+        eprintln!("错误: 缺少图片参数");
+        eprintln!("用法: ocr-cli <image> [选项]");
+        eprintln!("使用 --help 查看完整帮助");
+        process::exit(1);
+    }
+    args
+}
+
+/// 纯解析逻辑，不调用 process::exit，方便单元测试
+fn parse_args_impl(raw: &[String]) -> CliArgs {
+    let is_bundled = !EMBEDDED_VERSION.is_empty();
 
     let model_set = &MODEL_V5;
 
@@ -379,13 +390,6 @@ fn parse_args() -> CliArgs {
             }
         }
         i += 1;
-    }
-
-    if args.image.as_os_str().is_empty() && !args.help && !args.version && !args.list_models {
-        eprintln!("错误: 缺少图片参数");
-        eprintln!("用法: ocr-cli <image> [选项]");
-        eprintln!("使用 --help 查看完整帮助");
-        process::exit(1);
     }
 
     args
@@ -619,4 +623,484 @@ fn list_models() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+// ============================================================
+// 单元测试
+// ============================================================
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── helper ──────────────────────────────────────────
+
+    /// 构建模拟的 argv: ["ocr-cli", ...rest]
+    fn argv(rest: &[&str]) -> Vec<String> {
+        let mut v = vec!["ocr-cli".to_string()];
+        v.extend(rest.iter().map(|s| s.to_string()));
+        v
+    }
+
+    // ============================================================
+    // parse_backend 测试
+    // ============================================================
+
+    #[test]
+    fn test_parse_backend_cpu() {
+        assert!(matches!(parse_backend("cpu"), Backend::CPU));
+        assert!(matches!(parse_backend("CPU"), Backend::CPU));
+    }
+
+    #[test]
+    fn test_parse_backend_metal() {
+        assert!(matches!(parse_backend("metal"), Backend::Metal));
+    }
+
+    #[test]
+    fn test_parse_backend_opencl() {
+        assert!(matches!(parse_backend("opencl"), Backend::OpenCL));
+    }
+
+    #[test]
+    fn test_parse_backend_opengl() {
+        assert!(matches!(parse_backend("opengl"), Backend::OpenGL));
+    }
+
+    #[test]
+    fn test_parse_backend_vulkan() {
+        assert!(matches!(parse_backend("vulkan"), Backend::Vulkan));
+    }
+
+    #[test]
+    fn test_parse_backend_cuda() {
+        assert!(matches!(parse_backend("cuda"), Backend::CUDA));
+    }
+
+    #[test]
+    fn test_parse_backend_unknown_fallback() {
+        assert!(matches!(parse_backend("nonsense"), Backend::CPU));
+        assert!(matches!(parse_backend(""), Backend::CPU));
+    }
+
+    // ============================================================
+    // parse_args_impl 基础标志测试
+    // ============================================================
+
+    #[test]
+    fn test_help_short() {
+        let a = argv(&["-h"]);
+        let args = parse_args_impl(&a);
+        assert!(args.help);
+        assert!(!args.version);
+    }
+
+    #[test]
+    fn test_help_long() {
+        let a = argv(&["--help"]);
+        let args = parse_args_impl(&a);
+        assert!(args.help);
+    }
+
+    #[test]
+    fn test_version_short() {
+        let a = argv(&["-V"]);
+        let args = parse_args_impl(&a);
+        assert!(args.version);
+    }
+
+    #[test]
+    fn test_version_long() {
+        let a = argv(&["--version"]);
+        let args = parse_args_impl(&a);
+        assert!(args.version);
+    }
+
+    #[test]
+    fn test_list_models() {
+        let a = argv(&["--list-models"]);
+        let args = parse_args_impl(&a);
+        assert!(args.list_models);
+    }
+
+    #[test]
+    fn test_json() {
+        let a = argv(&["--json", "img.png"]);
+        let args = parse_args_impl(&a);
+        assert!(args.json);
+    }
+
+    #[test]
+    fn test_quiet() {
+        let a = argv(&["--quiet", "img.png"]);
+        let args = parse_args_impl(&a);
+        assert!(args.quiet);
+    }
+
+    // ============================================================
+    // 图片参数测试
+    // ============================================================
+
+    #[test]
+    fn test_image_positional() {
+        let a = argv(&["photo.jpg"]);
+        let args = parse_args_impl(&a);
+        assert_eq!(args.image, PathBuf::from("photo.jpg"));
+    }
+
+    #[test]
+    fn test_image_with_path_flag() {
+        let a = argv(&["--path", "photo.jpg"]);
+        let args = parse_args_impl(&a);
+        assert_eq!(args.image, PathBuf::from("photo.jpg"));
+    }
+
+    #[test]
+    fn test_image_missing_no_flags() {
+        let a = argv(&[]);
+        let args = parse_args_impl(&a);
+        assert!(args.image.as_os_str().is_empty());
+        // help/version/list-models 均为 false 时，调用方应 exit(1)
+    }
+
+    #[test]
+    fn test_image_missing_but_help() {
+        let a = argv(&["--help"]);
+        let args = parse_args_impl(&a);
+        assert!(args.help);
+        assert!(args.image.as_os_str().is_empty());
+        // 有 help 标志时不应 exit
+    }
+
+    #[test]
+    fn test_image_missing_but_version() {
+        let a = argv(&["-V"]);
+        let args = parse_args_impl(&a);
+        assert!(args.version);
+    }
+
+    #[test]
+    fn test_image_missing_but_list_models() {
+        let a = argv(&["--list-models"]);
+        let args = parse_args_impl(&a);
+        assert!(args.list_models);
+    }
+
+    // ============================================================
+    // -m / --model 测试
+    // ============================================================
+
+    #[test]
+    fn test_model_v4() {
+        let a = argv(&["img.png", "-m", "v4"]);
+        let args = parse_args_impl(&a);
+        assert_eq!(
+            args.det_model,
+            Some(PathBuf::from("models/ch_PP-OCRv4_det_infer.mnn"))
+        );
+        assert_eq!(
+            args.rec_model,
+            Some(PathBuf::from("models/ch_PP-OCRv4_rec_infer.mnn"))
+        );
+        assert_eq!(
+            args.keys,
+            Some(PathBuf::from("models/ppocr_keys_v4.txt"))
+        );
+    }
+
+    #[test]
+    fn test_model_v5() {
+        let a = argv(&["img.png", "-m", "v5"]);
+        let args = parse_args_impl(&a);
+        assert_eq!(
+            args.det_model,
+            Some(PathBuf::from("models/PP-OCRv5_mobile_det.mnn"))
+        );
+        assert_eq!(
+            args.rec_model,
+            Some(PathBuf::from("models/PP-OCRv5_mobile_rec.mnn"))
+        );
+        assert_eq!(
+            args.keys,
+            Some(PathBuf::from("models/ppocr_keys_v5.txt"))
+        );
+    }
+
+    #[test]
+    fn test_model_v6() {
+        let a = argv(&["img.png", "-m", "v6"]);
+        let args = parse_args_impl(&a);
+        assert_eq!(
+            args.det_model,
+            Some(PathBuf::from("models/PP-OCRv6_small_det.mnn"))
+        );
+        assert_eq!(
+            args.rec_model,
+            Some(PathBuf::from("models/PP-OCRv6_small_rec.mnn"))
+        );
+        assert_eq!(
+            args.keys,
+            Some(PathBuf::from("models/ppocr_keys_v6.txt"))
+        );
+    }
+
+    #[test]
+    fn test_model_default_v5() {
+        let a = argv(&["img.png"]);
+        let args = parse_args_impl(&a);
+        assert_eq!(
+            args.det_model,
+            Some(PathBuf::from("models/PP-OCRv5_mobile_det.mnn"))
+        );
+    }
+
+    #[test]
+    fn test_model_unknown_version() {
+        let a = argv(&["img.png", "-m", "v99"]);
+        let args = parse_args_impl(&a);
+        // 未知版本回退到 v5
+        assert_eq!(
+            args.det_model,
+            Some(PathBuf::from("models/PP-OCRv5_mobile_det.mnn"))
+        );
+    }
+
+    #[test]
+    fn test_m_json_alias() {
+        let a = argv(&["img.png", "-m", "json"]);
+        let args = parse_args_impl(&a);
+        assert!(args.json);
+        // 不改变模型路径
+        assert_eq!(
+            args.det_model,
+            Some(PathBuf::from("models/PP-OCRv5_mobile_det.mnn"))
+        );
+    }
+
+    #[test]
+    fn test_model_long_flag() {
+        let a = argv(&["img.png", "--model", "v6"]);
+        let args = parse_args_impl(&a);
+        assert_eq!(
+            args.det_model,
+            Some(PathBuf::from("models/PP-OCRv6_small_det.mnn"))
+        );
+    }
+
+    // ============================================================
+    // 模型路径覆盖测试
+    // ============================================================
+
+    #[test]
+    fn test_det_override() {
+        let a = argv(&["img.png", "--det", "custom_det.mnn"]);
+        let args = parse_args_impl(&a);
+        assert_eq!(args.det_model, Some(PathBuf::from("custom_det.mnn")));
+    }
+
+    #[test]
+    fn test_rec_override() {
+        let a = argv(&["img.png", "--rec", "custom_rec.mnn"]);
+        let args = parse_args_impl(&a);
+        assert_eq!(args.rec_model, Some(PathBuf::from("custom_rec.mnn")));
+    }
+
+    #[test]
+    fn test_keys_override() {
+        let a = argv(&["img.png", "--keys", "custom_keys.txt"]);
+        let args = parse_args_impl(&a);
+        assert_eq!(args.keys, Some(PathBuf::from("custom_keys.txt")));
+    }
+
+    #[test]
+    fn test_ori_model() {
+        let a = argv(&["img.png", "--ori", "models/ori.mnn"]);
+        let args = parse_args_impl(&a);
+        assert_eq!(args.ori_model, Some(PathBuf::from("models/ori.mnn")));
+    }
+
+    // ============================================================
+    // 其他选项测试
+    // ============================================================
+
+    #[test]
+    fn test_output() {
+        let a = argv(&["img.png", "--output", "out.png"]);
+        let args = parse_args_impl(&a);
+        assert_eq!(args.output, Some(PathBuf::from("out.png")));
+    }
+
+    #[test]
+    fn test_backend() {
+        let a = argv(&["img.png", "--backend", "metal"]);
+        let args = parse_args_impl(&a);
+        assert!(matches!(args.backend, Backend::Metal));
+    }
+
+    #[test]
+    fn test_threads() {
+        let a = argv(&["img.png", "--threads", "8"]);
+        let args = parse_args_impl(&a);
+        assert_eq!(args.threads, Some(8));
+    }
+
+    #[test]
+    fn test_threads_invalid() {
+        let a = argv(&["img.png", "--threads", "abc"]);
+        let args = parse_args_impl(&a);
+        assert_eq!(args.threads, None);
+    }
+
+    // ============================================================
+    // 组合测试
+    // ============================================================
+
+    #[test]
+    fn test_path_json_compat() {
+        // 外部系统调用格式: ocr-cli --path <img> -m json
+        let a = argv(&["--path", "photo.jpg", "-m", "json"]);
+        let args = parse_args_impl(&a);
+        assert_eq!(args.image, PathBuf::from("photo.jpg"));
+        assert!(args.json);
+    }
+
+    #[test]
+    fn test_image_m_v6_json_output() {
+        let a = argv(&["photo.jpg", "-m", "v6", "--json", "--output", "out.png"]);
+        let args = parse_args_impl(&a);
+        assert_eq!(args.image, PathBuf::from("photo.jpg"));
+        assert_eq!(
+            args.det_model,
+            Some(PathBuf::from("models/PP-OCRv6_small_det.mnn"))
+        );
+        assert!(args.json);
+        assert_eq!(args.output, Some(PathBuf::from("out.png")));
+    }
+
+    #[test]
+    fn test_full_pipeline_args() {
+        let a = argv(&[
+            "scan.png",
+            "-m", "v6",
+            "--ori", "models/ori.mnn",
+            "--backend", "cpu",
+            "--threads", "4",
+            "--json",
+            "--output", "annotated.png",
+        ]);
+        let args = parse_args_impl(&a);
+        assert_eq!(args.image, PathBuf::from("scan.png"));
+        assert_eq!(
+            args.det_model,
+            Some(PathBuf::from("models/PP-OCRv6_small_det.mnn"))
+        );
+        assert_eq!(args.ori_model, Some(PathBuf::from("models/ori.mnn")));
+        assert!(matches!(args.backend, Backend::CPU));
+        assert_eq!(args.threads, Some(4));
+        assert!(args.json);
+        assert_eq!(args.output, Some(PathBuf::from("annotated.png")));
+    }
+
+    #[test]
+    fn test_positional_after_flags() {
+        let a = argv(&["--json", "photo.jpg"]);
+        let args = parse_args_impl(&a);
+        assert!(args.json);
+        assert_eq!(args.image, PathBuf::from("photo.jpg"));
+    }
+
+    #[test]
+    fn test_image_before_flags() {
+        let a = argv(&["photo.jpg", "--json", "--quiet"]);
+        let args = parse_args_impl(&a);
+        assert_eq!(args.image, PathBuf::from("photo.jpg"));
+        assert!(args.json);
+        assert!(args.quiet);
+    }
+
+    // ============================================================
+    // output_text / output_json 测试
+    // ============================================================
+
+    fn make_result(text: &str, conf: f32, left: i32, top: i32, w: u32, h: u32) -> ocr_rs::OcrResult_ {
+        use imageproc::rect::Rect;
+        use ocr_rs::TextBox;
+        let rect = Rect::at(left, top).of_size(w, h);
+        let bbox = TextBox::new(rect, conf);
+        ocr_rs::OcrResult_::new(text.to_string(), conf, bbox)
+    }
+
+    #[test]
+    fn test_output_text_empty() {
+        let results: Vec<ocr_rs::OcrResult_> = vec![];
+        output_text(&results, true);
+        output_text(&results, false);
+    }
+
+    #[test]
+    fn test_output_text_single() {
+        let results = vec![make_result("Hello", 0.95, 10, 20, 100, 30)];
+        output_text(&results, true);
+        output_text(&results, false);
+    }
+
+    #[test]
+    fn test_output_text_multiple() {
+        let results = vec![
+            make_result("Line 1", 0.95, 10, 20, 100, 30),
+            make_result("Line 2", 0.88, 10, 60, 120, 30),
+            make_result("Line 3", 0.72, 10, 100, 90, 30),
+        ];
+        output_text(&results, true);
+        output_text(&results, false);
+    }
+
+    #[test]
+    fn test_output_json_empty() {
+        let results: Vec<ocr_rs::OcrResult_> = vec![];
+        let r = output_json(&results, false);
+        assert!(r.is_ok());
+    }
+
+    #[test]
+    fn test_output_json_single() {
+        let results = vec![make_result("Hello", 0.95, 10, 20, 100, 30)];
+        let r = output_json(&results, false);
+        assert!(r.is_ok());
+    }
+
+    #[test]
+    fn test_output_json_multiple() {
+        let results = vec![
+            make_result("Hello", 0.95, 10, 20, 100, 30),
+            make_result("World", 0.88, 10, 60, 120, 30),
+        ];
+        let r = output_json(&results, false);
+        assert!(r.is_ok());
+    }
+
+    #[test]
+    fn test_output_json_quiet() {
+        let results = vec![make_result("Test", 0.90, 0, 0, 50, 20)];
+        let r = output_json(&results, true);
+        assert!(r.is_ok());
+    }
+
+    // ============================================================
+    // OcrResult_ 测试
+    // ============================================================
+
+    #[test]
+    fn test_ocr_result_new() {
+        use imageproc::rect::Rect;
+        use ocr_rs::TextBox;
+        let rect = Rect::at(5, 10).of_size(100, 30);
+        let bbox = TextBox::new(rect, 0.95);
+        let r = ocr_rs::OcrResult_::new("test".into(), 0.95, bbox);
+        assert_eq!(r.text, "test");
+        assert!((r.confidence - 0.95).abs() < f32::EPSILON);
+        assert_eq!(r.bbox.rect.left(), 5);
+        assert_eq!(r.bbox.rect.top(), 10);
+        assert_eq!(r.bbox.rect.width(), 100);
+        assert_eq!(r.bbox.rect.height(), 30);
+    }
 }
