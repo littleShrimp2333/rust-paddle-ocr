@@ -89,6 +89,9 @@ jobs:
         version: [v4, v5, v6]
     steps:
       - name: Install system dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+          TZ: Etc/UTC
         run: |
           apt-get update
           apt-get install -y curl build-essential cmake git pkg-config libssl-dev
