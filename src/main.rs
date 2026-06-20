@@ -154,12 +154,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // 创建引擎: 内嵌模式 vs 文件模式
     let engine = if !EMBEDDED_VERSION.is_empty() {
-        create_embedded_engine(config)?
+        create_embedded_engine(config, args.json || args.quiet)?
     } else {
         create_file_engine(&args, config)?
     };
 
-    if !args.quiet {
+    if !args.quiet && !args.json {
         eprintln!("   图片: {}", args.image.display());
     }
 
@@ -169,14 +169,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let results = engine.recognize(&image)?;
 
     if args.json {
-        output_json(&results, args.quiet)?;
+        output_json(&results, args.json || args.quiet)?;
     } else {
         output_text(&results, args.quiet);
     }
 
     if let Some(ref output_path) = args.output {
         save_annotated_image(&image, &results, output_path)?;
-        if !args.quiet {
+        if !args.quiet && !args.json {
             eprintln!("   ✅ 标注图片已保存: {}", output_path.display());
         }
     }
@@ -185,9 +185,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// 内嵌模式: 模型数据编译进二进制
-fn create_embedded_engine(config: OcrEngineConfig) -> Result<OcrEngine, Box<dyn std::error::Error>> {
+fn create_embedded_engine(config: OcrEngineConfig, quiet: bool) -> Result<OcrEngine, Box<dyn std::error::Error>> {
     let (det_data, rec_data, keys_data) = get_embedded_models();
-    eprintln!("🔍 OCR CLI v{} [内嵌 {} 模型]", ocr_rs::version(), EMBEDDED_VERSION);
+    if !quiet {
+        eprintln!("🔍 OCR CLI v{} [内嵌 {} 模型]", ocr_rs::version(), EMBEDDED_VERSION);
+    }
     Ok(OcrEngine::from_bytes(det_data, rec_data, keys_data, Some(config))?)
 }
 
@@ -197,7 +199,7 @@ fn create_file_engine(args: &CliArgs, config: OcrEngineConfig) -> Result<OcrEngi
     let rec = args.rec_model.as_ref().expect("缺少识别模型路径");
     let keys = args.keys.as_ref().expect("缺少字符集路径");
 
-    if !args.quiet {
+    if !args.quiet && !args.json {
         eprintln!("🔍 OCR CLI v{}", ocr_rs::version());
         eprintln!("   检测: {}", det.display());
         eprintln!("   识别: {}", rec.display());
@@ -315,27 +317,28 @@ fn parse_args_impl(raw: &[String]) -> CliArgs {
             "--json" => args.json = true,
             "--quiet" => args.quiet = true,
             "-m" | "--model" => {
-                if is_bundled {
-                    eprintln!("警告: 内嵌模式已固定为 {} 模型，--model 参数被忽略", EMBEDDED_VERSION);
-                }
                 i += 1;
                 let val = raw.get(i).cloned().unwrap_or_default();
                 // 兼容 -m json 作为 --json 的别名
                 if val == "json" {
                     args.json = true;
-                } else if !is_bundled {
-                    let ms = match val.as_str() {
-                        "v4" => &MODEL_V4,
-                        "v5" => &MODEL_V5,
-                        "v6" => &MODEL_V6,
-                        other => {
-                            eprintln!("警告: 未知模型版本 '{:?}'，使用 v5", other);
-                            &MODEL_V5
-                        }
-                    };
-                    args.det_model = Some(PathBuf::from(DEFAULT_MODEL_DIR).join(ms.det));
-                    args.rec_model = Some(PathBuf::from(DEFAULT_MODEL_DIR).join(ms.rec));
-                    args.keys = Some(PathBuf::from(DEFAULT_MODEL_DIR).join(ms.keys));
+                } else {
+                    if is_bundled {
+                        eprintln!("警告: 内嵌模式已固定为 {} 模型，--model 参数被忽略", EMBEDDED_VERSION);
+                    } else {
+                        let ms = match val.as_str() {
+                            "v4" => &MODEL_V4,
+                            "v5" => &MODEL_V5,
+                            "v6" => &MODEL_V6,
+                            other => {
+                                eprintln!("警告: 未知模型版本 '{:?}'，使用 v5", other);
+                                &MODEL_V5
+                            }
+                        };
+                        args.det_model = Some(PathBuf::from(DEFAULT_MODEL_DIR).join(ms.det));
+                        args.rec_model = Some(PathBuf::from(DEFAULT_MODEL_DIR).join(ms.rec));
+                        args.keys = Some(PathBuf::from(DEFAULT_MODEL_DIR).join(ms.keys));
+                    }
                 }
             }
             "--path" => {
@@ -869,11 +872,28 @@ mod tests {
         let a = argv(&["img.png", "-m", "json"]);
         let args = parse_args_impl(&a);
         assert!(args.json);
+        assert!(!args.quiet, "json 和 quiet 应保持独立");
         // 不改变模型路径
         assert_eq!(
             args.det_model,
             Some(PathBuf::from("models/PP-OCRv5_mobile_det.mnn"))
         );
+    }
+
+    #[test]
+    fn test_json_flag_does_not_set_quiet() {
+        let a = argv(&["img.png", "--json"]);
+        let args = parse_args_impl(&a);
+        assert!(args.json);
+        assert!(!args.quiet, "--json 不应隐含 --quiet");
+    }
+
+    #[test]
+    fn test_quiet_does_not_set_json() {
+        let a = argv(&["img.png", "--quiet"]);
+        let args = parse_args_impl(&a);
+        assert!(args.quiet);
+        assert!(!args.json, "--quiet 不应隐含 --json");
     }
 
     #[test]
@@ -961,6 +981,24 @@ mod tests {
         let args = parse_args_impl(&a);
         assert_eq!(args.image, PathBuf::from("photo.jpg"));
         assert!(args.json);
+        assert!(!args.quiet, "外部调用不应隐含 --quiet");
+    }
+
+    #[test]
+    fn test_path_m_json_combined() {
+        // --path 和 -m json 可以任意顺序
+        let a = argv(&["-m", "json", "--path", "photo.jpg"]);
+        let args = parse_args_impl(&a);
+        assert_eq!(args.image, PathBuf::from("photo.jpg"));
+        assert!(args.json);
+    }
+
+    #[test]
+    fn test_json_quiet_both() {
+        let a = argv(&["img.png", "--json", "--quiet"]);
+        let args = parse_args_impl(&a);
+        assert!(args.json);
+        assert!(args.quiet, "同时指定 --json --quiet 时 quiet 应为 true");
     }
 
     #[test]
